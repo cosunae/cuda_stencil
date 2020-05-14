@@ -28,6 +28,7 @@
 class GpuTriMesh {
 private:
   int* ecvTable_ = 0;
+  int* veTable_ = 0;
 
   int numNodes_ = 0;
   int numEdges_ = 0;
@@ -39,6 +40,7 @@ public:
   int NumCells() const { return numCells_; }
 
   int* ECVTable() const { return ecvTable_; }
+  int* VETable() const { return veTable_; }
 
   GpuTriMesh(const atlas::Mesh& mesh);
 };
@@ -76,6 +78,8 @@ public:
 
     // input field on vertices and eges
     dawn::float_type* vn_vert_;
+    dawn::float_type* rbf_vec_coeff_u_;
+    dawn::float_type* rbf_vec_coeff_v_;
     dawn::float_type* vn_;
 
     // tangential and normal coefficient for smagorinsky
@@ -110,6 +114,8 @@ public:
                     const atlasInterface::SparseDimension<dawn::float_type>& primal_normal_vert_y,
                     const atlasInterface::SparseDimension<dawn::float_type>& dual_normal_vert_x,
                     const atlasInterface::SparseDimension<dawn::float_type>& dual_normal_vert_y,
+                    const atlasInterface::SparseDimension<dawn::float_type>& rbf_vec_coeff_u,
+                    const atlasInterface::SparseDimension<dawn::float_type>& rbf_vec_coeff_v,
                     const atlasInterface::SparseDimension<dawn::float_type>& vn_vert,
                     const atlasInterface::Field<dawn::float_type>& vn,
                     const atlasInterface::Field<dawn::float_type>& dvt_tang,

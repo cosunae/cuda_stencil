@@ -40,8 +40,47 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 }
 
 #define E_C_V_SIZE 4
+#define V_E_SIZE 6
 #define BLOCK_SIZE 128
 #define DEVICE_MISSING_VALUE -1
+
+__global__ void compute_vn_vert(int numEdges, int numVertices, int kSize,
+                                const int* __restrict__ veTable, float2* __restrict__ uv,
+                                const dawn::float_type* __restrict__ rbf_vec_coeff_u,
+                                const dawn::float_type* __restrict__ rbf_vec_coeff_v,
+                                const dawn::float_type* __restrict__ vn) {
+
+  unsigned int pidx = blockIdx.x * blockDim.x + threadIdx.x;
+  if(pidx >= numVertices) {
+    return;
+  }
+  {
+    for(int kIter = 0; kIter < kSize; kIter++) {
+      const int edgesDenseKOffset = kIter * numEdges;
+      const int verticesDenseKOffset = kIter * numVertices;
+      const int denseIdx = verticesDenseKOffset + pidx;
+      const int ecvSparseKOffset = kIter * numVertices * V_E_SIZE;
+
+      dawn::float_type u = 0;
+      dawn::float_type v = 0;
+
+      for(int nbhIter = 0; nbhIter < V_E_SIZE; nbhIter++) { // for(v->e)
+        int nbhIdx = __ldg(&veTable[pidx * V_E_SIZE + nbhIter]);
+        const int sparseIdx = ecvSparseKOffset + nbhIter * numVertices + pidx;
+
+        if(nbhIdx == DEVICE_MISSING_VALUE) {
+          continue;
+        }
+
+        v += __ldg(&vn[edgesDenseKOffset + nbhIdx]) * __ldg(&rbf_vec_coeff_v[sparseIdx]);
+        u += __ldg(&vn[edgesDenseKOffset + nbhIdx]) * __ldg(&rbf_vec_coeff_u[sparseIdx]);
+      }
+
+      uv[denseIdx].x = u;
+      uv[denseIdx].y = v;
+    }
+  }
+}
 
 __global__ void merged(int numEdges, int numVertices, int kSize, const int* __restrict__ ecvTable,
                        dawn::float_type* __restrict__ nabla2,
@@ -171,10 +210,14 @@ GpuTriMesh::GpuTriMesh(const atlas::Mesh& mesh) {
   numCells_ = mesh.cells().size();
 
   gpuErrchk(cudaMalloc((void**)&ecvTable_, sizeof(int) * mesh.edges().size() * E_C_V_SIZE));
+  gpuErrchk(cudaMalloc((void**)&veTable_, sizeof(int) * mesh.nodes().size() * V_E_SIZE));
 
   generateNbhTable(
       mesh, {dawn::LocationType::Edges, dawn::LocationType::Cells, dawn::LocationType::Vertices},
       mesh.edges().size(), E_C_V_SIZE, ecvTable_);
+
+  generateNbhTable(mesh, {dawn::LocationType::Vertices, dawn::LocationType::Edges},
+                   mesh.nodes().size(), V_E_SIZE, veTable_);
 }
 
 void reshape(const dawn::float_type* input, dawn::float_type* output, int kSize, int numEdges,
@@ -283,6 +326,8 @@ DiamondStencil::diamond_stencil::diamond_stencil(
     const atlasInterface::SparseDimension<dawn::float_type>& primal_normal_vert_y,
     const atlasInterface::SparseDimension<dawn::float_type>& dual_normal_vert_x,
     const atlasInterface::SparseDimension<dawn::float_type>& dual_normal_vert_y,
+    const atlasInterface::SparseDimension<dawn::float_type>& rbf_vec_coeff_u,
+    const atlasInterface::SparseDimension<dawn::float_type>& rbf_vec_coeff_v,
     const atlasInterface::SparseDimension<dawn::float_type>& vn_vert,
     const atlasInterface::Field<dawn::float_type>& vn,
     const atlasInterface::Field<dawn::float_type>& dvt_tang,
@@ -303,6 +348,8 @@ DiamondStencil::diamond_stencil::diamond_stencil(
   initSparseField(dual_normal_vert_x, dual_normal_vert_y, &dual_normal_vert_, mesh.edges().size(),
                   E_C_V_SIZE, k_size);
   initSparseField(vn_vert, &vn_vert_, mesh.edges().size(), E_C_V_SIZE, k_size);
+  initSparseField(rbf_vec_coeff_u, &rbf_vec_coeff_u_, mesh.nodes().size(), V_E_SIZE, k_size);
+  initSparseField(rbf_vec_coeff_v, &rbf_vec_coeff_v_, mesh.nodes().size(), V_E_SIZE, k_size);
 
   initField(vn, &vn_, mesh.edges().size(), k_size);
   initField(dvt_tang, &dvt_tang_, mesh.edges().size(), k_size);
@@ -314,12 +361,20 @@ DiamondStencil::diamond_stencil::diamond_stencil(
 }
 
 void DiamondStencil::diamond_stencil::run() {
-  // stage over edges
-  dim3 dG((mesh_.NumEdges() + BLOCK_SIZE - 1) / BLOCK_SIZE);
-  dim3 dB(BLOCK_SIZE);
 
   // starting timers
   start();
+
+  // stage over vertices
+  dim3 dG((mesh_.NumNodes() + BLOCK_SIZE - 1) / BLOCK_SIZE);
+  dim3 dB(BLOCK_SIZE);
+
+  compute_vn_vert<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.VETable(), uv_,
+                              rbf_vec_coeff_u_, rbf_vec_coeff_v_, vn_);
+
+  // stage over edges
+  dG = dim3((mesh_.NumEdges() + BLOCK_SIZE - 1) / BLOCK_SIZE);
+  dB = dim3(BLOCK_SIZE);
 
   merged<<<dG, dB>>>(mesh_.NumEdges(), mesh_.NumNodes(), kSize_, mesh_.ECVTable(), z_nabla2_e_,
                      inv_primal_edge_length_, inv_vert_vert_length_, tangent_orientation_, uv_,

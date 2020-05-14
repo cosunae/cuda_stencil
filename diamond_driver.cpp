@@ -229,6 +229,12 @@ int main(int argc, char const* argv[]) {
   auto [dual_normal_y_F, dual_normal_y] =
       MakeAtlasSparseField("dual_normal_y", mesh.edges().size(), verticesInDiamond);
 
+  auto [rbf_vec_coeff_u_F, rbf_vec_coeff_u] =
+      MakeAtlasSparseField("rbf_vec_coeff_u", mesh.nodes().size(), edgesPerVertex);
+
+  auto [rbf_vec_coeff_v_F, rbf_vec_coeff_v] =
+      MakeAtlasSparseField("rbf_vec_coeff_v", mesh.nodes().size(), edgesPerVertex);
+
   //===------------------------------------------------------------------------------------------===//
   // sparse dimension intermediary field for diamond
   //===------------------------------------------------------------------------------------------===//
@@ -358,6 +364,12 @@ int main(int argc, char const* argv[]) {
         // dual_normal_y(edgeIdx, nbhIdx, level) = -nx;
       }
     }
+    for(int nodeIdx = 0; nodeIdx < mesh.nodes().size(); nodeIdx++) {
+      for(int nbhIdx = 0; nbhIdx < edgesPerVertex; nbhIdx++) {
+        rbf_vec_coeff_v(nodeIdx, nbhIdx, level) = 1.;
+        rbf_vec_coeff_u(nodeIdx, nbhIdx, level) = 1.;
+      }
+    }
   }
 
   //===------------------------------------------------------------------------------------------===//
@@ -378,10 +390,11 @@ int main(int argc, char const* argv[]) {
   //===------------------------------------------------------------------------------------------===//
   // stencil call
   //===------------------------------------------------------------------------------------------===/
-  DiamondStencil::diamond_stencil lapl(
-      mesh, k_size, diff_multfac_smag, tangent_orientation, inv_primal_edge_length,
-      inv_vert_vert_length, u, v, primal_normal_x, primal_normal_y, dual_normal_x, dual_normal_y,
-      vn_vert, vn, dvt_tang, dvt_norm, kh_smag_1, kh_smag_2, kh_smag, nabla2);
+  DiamondStencil::diamond_stencil lapl(mesh, k_size, diff_multfac_smag, tangent_orientation,
+                                       inv_primal_edge_length, inv_vert_vert_length, u, v,
+                                       primal_normal_x, primal_normal_y, dual_normal_x,
+                                       dual_normal_y, rbf_vec_coeff_u, rbf_vec_coeff_v, vn_vert, vn,
+                                       dvt_tang, dvt_norm, kh_smag_1, kh_smag_2, kh_smag, nabla2);
 
   const int warmup_runs = 100;
   for(int i = 0; i < warmup_runs; i++) {
